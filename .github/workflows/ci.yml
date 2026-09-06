@@ -16,7 +16,7 @@ jobs:
     name: fmt, clippy, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # rust-toolchain.toml pins the version, so this installs exactly that.
       - name: Install Rust
@@ -40,7 +40,7 @@ jobs:
     name: docker build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       # Proves the scratch/musl image still builds. It is the artifact that
       # actually ships, and it breaks in ways `cargo build` cannot catch.
@@ -66,7 +66,7 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       # Run cargo-audit directly rather than via rustsec/audit-check. That
       # action reports by creating a check run, which needs `checks: write`;
@@ -96,7 +96,7 @@ jobs:
       group: deploy-fly
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Pinned by SHA: this job holds FLY_API_TOKEN, so a mutable ref is a
       # supply-chain hole. SHA is tag 1.5 of superfly/flyctl-actions.
       - uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be # 1.5
