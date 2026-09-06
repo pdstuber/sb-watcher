@@ -49,11 +49,22 @@ a site redesign would otherwise blind the watcher permanently while it looked he
    set -x TELOXIDE_TOKEN "123456:ABC..."
    cargo run
    ```
-3. Optional but recommended: pick an **unguessable** ntfy topic, install the
-   [ntfy app](https://ntfy.sh/), subscribe, and set the topic to max priority.
-   **ntfy topics on the public server are unauthenticated** — anyone who knows the name can read your
-   alerts and publish to them. Use a long random string, not `sb-watcher`.
-4. Give the Telegram chat a custom loud sound and exempt it from Do Not Disturb.
+3. Make the alert loud enough to wake you. **On iPhone** this means Telegram, not ntfy:
+   - iOS Settings → Focus → Do Not Disturb → **Allowed Apps** → add Telegram.
+   - In Telegram, open the bot chat → Notifications → set a distinct, loud custom sound.
+
+   The 5-minute repeat (six times, 30 minutes) is the real safety net here — a single push is easy
+   to sleep through, six spread over half an hour is not.
+
+4. Optional, and **only worth it on Android**: set `NTFY_TOPIC` to an unguessable string, install the
+   [ntfy app](https://ntfy.sh/), subscribe, and set the topic to max priority. On Android that
+   genuinely bypasses Do Not Disturb. **On iOS it does not** — the ntfy app has no Critical Alerts
+   entitlement, so a max-priority ntfy push is no louder than a Telegram one, and it only adds
+   redundancy against a Telegram outage.
+
+   Note that **ntfy topics on the public server are unauthenticated**: anyone who knows the name can
+   read your alerts *and* publish fake ones. Use a long random string, never `sb-watcher`.
+   Leaving `NTFY_TOPIC` unset disables the channel entirely.
 
 ## Telegram commands
 
@@ -89,7 +100,7 @@ HTML instead. This is the only way to prove the alert path works *before* the ni
 it before trusting the deployment:
 
 ```fish
-set -x TELOXIDE_TOKEN "..."; set -x TELEGRAM_CHAT_ID "..."; set -x NTFY_TOPIC "..."
+set -x TELOXIDE_TOKEN "..."; set -x TELEGRAM_CHAT_ID "..."
 set -x SB_WATCHER_FIXTURE_PATH tests/fixtures/real_available_many.html
 set -x POLL_INTERVAL_SECS 10
 cargo run
