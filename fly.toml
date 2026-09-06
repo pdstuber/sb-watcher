@@ -1,0 +1,16 @@
+app = 'sb-watcher'
+primary_region = 'fra'
+
+[build]
+
+[env]
+  RUST_LOG = 'info'
+
+# No [http_service] and no PORT: the bot uses Telegram long polling, so nothing
+# listens for inbound connections. Omitting the service is also what keeps fly
+# from auto-stopping the machine — this must run 24/7 to catch a ticket drop.
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
