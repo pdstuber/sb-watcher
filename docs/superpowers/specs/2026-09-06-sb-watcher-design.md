@@ -44,7 +44,7 @@ Verified by direct HTTP probing of the live site on 2026-09-06:
   the only route.
 - The Ticketbörse block is rendered **inline** inside `<turbo-frame id="ticket_detail">`, not
   lazily loaded, so a single request retrieves everything.
-- The empty state, verbatim, lives in a `div.card` whose `.card-header h2` reads `Ticketbörse`:
+- The empty state, verbatim, lives in a `div.card` whose `.card-header` reads `Ticketbörse`:
 
   ```html
   <div class="alert alert-info mb-0 p-2">
@@ -61,24 +61,75 @@ Verified by direct HTTP probing of the live site on 2026-09-06:
 
 The captured page is committed as `tests/fixtures/empty_resale.html`.
 
-## The constraint that shapes everything
+### The populated markup, recovered from sibling shops
 
-sbtix.de has exactly **one** ticket product site-wide. Six sibling Tickettoaster shops were
-scanned for a Ticketbörse holding stock; none had one.
+A scan of all 68 Tickettoaster shops listed on the vendor's reference page (122 ticket pages
+checked) found **two events with live resale stock**, plus seven empty ones. The populated markup
+is therefore no longer a guess:
 
-**The "tickets available" markup cannot be observed.** We do not know, and cannot find out, what
-the page looks like when resale tickets exist.
+- **fatoni.shop** — 10 tickets, all `45,20 €` → `tests/fixtures/real_available_many.html`
+- **berq-shop.de** — 1 ticket, `56,85 €` → `tests/fixtures/real_available_one.html`
 
-A detector written against a guessed "available" pattern would be a detector we cannot test and
-have no reason to trust. So the design inverts the question. It defines exactly one
-**known-quiet state**:
+When stock exists, the card gains a second `.card-header` headed **`Tickets im Weiterverkauf`**
+and a list of offers, each shaped like:
+
+```html
+<li class="list-group-item list-group-item-action p-3 rounded" id="voucher_swap_12742">
+  <div class="fs-6">FATONI - Stehplatz</div>
+  <div class="col-auto">45,20&#x202F;€</div>
+  <form method="get" action="/swp/VSC-3t8tfb-2tH-zcmp-Fpd7f8u/modal.turbo_stream">
+```
+
+The empty-state `alert-info` div is absent entirely in that state.
+
+Two further findings from the scan, both of which change the implementation:
+
+1. **The offer list is server-rendered even though it is visually collapsed.** It sits in
+   `<div class="card-body collapse ...">`, expanded by Stimulus on click, but the content is in
+   the HTML of a plain GET. No JavaScript is required to read it.
+2. **The heading markup varies per shop, and is not always an `h2`.** fatoni renders
+   `<div class="col fw-bold">Ticketbörse </div>`; berq renders `<h2 class="fs-3">Ticketbörse </h2>`;
+   sbtix renders `<h2 class="col fw-bold fs-6 mb-0">Ticketbörse </h2>`. A selector requiring an
+   `h2` would work on sbtix today but is one theme update away from failing, so the card must be
+   located by `.card-header` **text**, with no element-type requirement.
+
+The seven empty pages, spread across **two shops other than sbtix**, all carry the byte-identical
+sentence `Es gibt aktuell keine Tickets zum Weiterverkauf.` That is good evidence the marker is
+platform boilerplate rather than sbtix-specific copy, and so is stable to depend on.
+
+## Detection strategy
+
+sbtix.de has exactly **one** ticket product site-wide, so the populated state can never be
+observed there. It was recovered from sibling shops instead (above), which means we now have real
+markup to test against. That changes what is knowable, but not the detector's shape.
+
+The detector stays **inverted**. It defines exactly one **known-quiet state**:
 
 > the Ticketbörse card is present, contains the empty-state sentence, and is otherwise unchanged
 > from the last observation
 
-and treats **any** departure from it as alert-worthy. The asymmetry justifies this: missing a real
-drop loses the tickets, while a false alarm costs ten seconds of attention. Alerts are labelled by
-severity so the two remain distinguishable.
+and treats **any** departure from it as alert-worthy. The reasons this survives having found the
+real markup:
+
+- The recovered samples come from *other shops with other themes*. The offer-list internals
+  (`voucher_swap`, `/swp/…`) look like shared platform code, but the surrounding markup demonstrably
+  varies per shop — the heading is an `h2` on two shops and a plain `div` on a third. sbtix's
+  populated state is still not directly observed.
+- The asymmetry is brutal: missing a real drop loses the tickets, while a false alarm costs ten
+  seconds of attention.
+- A positive-pattern detector **fails closed** — if the markup differs from expectation it reports
+  "all quiet" and you learn nothing. The inverted rule **fails open**.
+
+So the recovered markup is used for **enrichment, never as a gate**:
+
+| Layer | Role | Failure mode |
+|---|---|---|
+| Empty-marker absence | **Primary.** Decides alert / no alert. | Fails open — unknown markup still alerts. |
+| `voucher_swap` parsing | **Enrichment.** Extracts count, names, prices. | If it parses nothing, the alert still fires, carrying raw card text. |
+
+The enrichment matters practically: the goal is **two tickets**, so an alert reading
+*"3 tickets available, 45,20 € each"* is far more actionable than *"something changed"* — it tells
+you whether it is even worth racing to the checkout.
 
 ## Decisions
 
@@ -141,23 +192,33 @@ clock-dependent global state, so they are exhaustively unit-testable against fix
 ### `parse.rs` — the core
 
 `scraper` has no `:contains()`, so the card is located structurally rather than by text position:
-iterate `div.card`, and for each, check whether its `.card-header h2` text trims to `Ticketbörse`.
-This survives the card moving on the page or gaining sibling cards.
+iterate `div.card` and keep those with a `.card-header` whose text contains `Ticketbörse`; where
+several nest, take the innermost (shortest text). Matching on header **text** rather than on
+`.card-header h2` is deliberate — fatoni renders that heading as a plain `div`, so an `h2`
+requirement is one theme update away from blinding the watcher.
 
 ```rust
 enum ResaleState { Empty, Available }
 
+struct Listing {
+    id: String,      // e.g. "voucher_swap_12742"
+    name: String,    // e.g. "FATONI - Stehplatz"
+    price: String,   // e.g. "45,20 €"
+}
+
 struct PageObservation {
     resale: ResaleState,
-    resale_text: String,   // normalized (whitespace-collapsed) inner text of the card
-    resale_hash: String,   // sha256 of resale_text
-    main_sold_out: bool,   // "Ausverkauft" present in the ticket_detail section
+    resale_text: String,     // normalized (whitespace-collapsed) inner text of the card
+    listings: Vec<Listing>,  // enrichment only; may be empty even when Available
+    main_sold_out: bool,     // "Ausverkauft" present in the ticket_detail section
 }
 ```
 
 - `Empty` iff the normalized card text contains `Es gibt aktuell keine Tickets zum Weiterverkauf`.
 - `Available` otherwise — that is, on *anything else at all*.
 - `ParseError::CardNotFound` if the card cannot be located.
+- `listings` is parsed from `li[id^="voucher_swap_"]` and **never** influences `resale`. An
+  `Available` observation with zero parsed listings is valid and must still alert.
 
 `CardNotFound` must **never** be swallowed. A site redesign would otherwise blind the watcher
 permanently while it continued to report all quiet. It raises a warning alert, rate-limited to
@@ -167,7 +228,7 @@ once per 24h until the structure recovers.
 
 | Condition | Message | Severity |
 |---|---|---|
-| resale `Empty` → `Available` | 🎟️ TICKETS AVAILABLE + link + card text | **max**, repeats |
+| resale `Empty` → `Available` | 🎟️ TICKETS AVAILABLE + ticket count, prices, link | **max**, repeats |
 | main sold out → not sold out | 🎟️ MAIN SHOP NO LONGER SOLD OUT + link | **max**, repeats |
 | resale `Available` → `Empty` | resale stock gone | info, once |
 | still `Empty`, `resale_hash` changed | ⚠️ Ticketbörse wording changed (old → new) | info, once |
@@ -208,20 +269,24 @@ message it, read your ID off the reply.
 
 Implementation follows TDD. The pure layers come first and run without network or secrets.
 
-**Fixtures.** The real captured page is the golden negative, `tests/fixtures/empty_resale.html`.
+**Fixtures**, in two tiers.
 
-Because the positive markup is unobservable, positive fixtures are **synthesized** by editing that
-real page — replacing the `alert-info` div with (a) a plausible listing table, (b) an empty div,
-(c) nothing at all. These deliberately do not attempt to guess the real markup. They assert the
-property that makes the design sound:
+*Real pages*, captured from live shops — these carry the authority:
 
-> anything other than the known empty sentence classifies as `Available`
+| Fixture | Source | Asserts |
+|---|---|---|
+| `empty_resale.html` | sbtix.de, the actual target | `Empty`, `main_sold_out == true` |
+| `real_available_many.html` | fatoni.shop | `Available`, 10 listings at `45,20 €` |
+| `real_available_one.html` | berq-shop.de | `Available`, 1 listing at `56,85 €`, and — being a plain-`div` heading — that the card is still found |
 
-Three structurally different "somethings" all landing on `Available` is what demonstrates the
-detector is not pattern-matching a guess.
+*Synthesized pages*, made by editing the real sbtix page, which cover the shapes no live sample
+provides: the empty div replaced by nothing, replaced by an unrecognized blob, the card removed
+entirely (→ `CardNotFound`), and the `Ausverkauft` banner removed (→ `main_sold_out == false`).
 
-Further fixtures: the card removed entirely → `CardNotFound`; `alert-danger Ausverkauft` present
-and absent → `main_sold_out` both ways.
+The synthesized "unrecognized blob" case is the one that must never be deleted as redundant. The
+real fixtures prove the parser handles today's known markup; that one proves the **fail-open**
+property — that markup nobody has ever seen still classifies as `Available`. Since sbtix's own
+populated state remains unobserved, it is the case most likely to be the one that actually happens.
 
 Transition, repeat and cap logic is tested against the recording fake notifier — no network, and
 injected timestamps rather than wall-clock sleeps.
@@ -231,11 +296,13 @@ injected timestamps rather than wall-clock sleeps.
 1. `cargo test` — parse and transition suites green.
 2. `cargo run` against the live URL with `POLL_INTERVAL_SECS=10`; confirm the startup message
    arrives and `/status` responds.
-3. **The rehearsal that matters.** Set `SB_WATCHER_FIXTURE_PATH` to a synthesized *available*
-   fixture and confirm the real 🎟️ alert reaches the phone over **both** Telegram and ntfy, that
-   the 5-minute repeat fires, that it stops after 6, and that `/ack` silences it early.
-   Since the live site cannot produce this state on demand, this is the only way to prove the
-   alert path works before the moment it has to.
+3. **The rehearsal that matters.** Point `SB_WATCHER_FIXTURE_PATH` at `real_available_many.html`
+   — genuine markup from a shop that really had 10 tickets for sale — and confirm the 🎟️ alert
+   reaches the phone over **both** Telegram and ntfy carrying the correct count and price, that the
+   5-minute repeat fires, that it stops after 6, and that `/ack` silences it early. Repeat with the
+   synthesized unrecognized-blob fixture to confirm the fail-open path also alerts.
+   Since the live site cannot produce this state on demand, this is the only way to prove the alert
+   path works before the moment it has to.
 4. `fly deploy`; `fly logs` shows the poll loop; `/status` answers from the deployed machine.
 5. Confirm the 24h heartbeat the following day.
 
