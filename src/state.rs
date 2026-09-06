@@ -1,4 +1,4 @@
-use crate::parse::{Listing, PageObservation, ResaleState};
+use crate::parse::{Listing, MainStock, PageObservation, ResaleState};
 
 /// Human summary of what is on offer. Falls back to the raw card text when no
 /// listings could be parsed — the alert must never be suppressed or emptied
@@ -34,6 +34,7 @@ pub enum AlertKind {
     StructureChanged,
     FetchFailing,
     Heartbeat,
+    Started,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,7 +87,7 @@ pub fn transitions(prev: Option<&PageObservation>, cur: &PageObservation, url: &
             if cur.resale == ResaleState::Available {
                 resale_available(&mut out);
             }
-            if !cur.main_sold_out {
+            if cur.main == MainStock::OnSale {
                 main_on_sale(&mut out);
             }
         }
@@ -99,26 +100,35 @@ pub fn transitions(prev: Option<&PageObservation>, cur: &PageObservation, url: &
                     "Resale stock gone",
                     format!("The Ticketbörse is empty again.\n\n{url}"),
                 )),
-                // Same state, but the wording moved: worth knowing, since a
+                // Still empty, but the wording moved: worth knowing, since a
                 // rewrite of the empty sentence would otherwise blind the detector.
-                _ if p.resale_text != cur.resale_text => out.push(Alert::new(
+                // Deliberately NOT for Available→Available: listings churn while
+                // stock is up, and that is not the detector going blind.
+                (ResaleState::Empty, ResaleState::Empty) if p.resale_text != cur.resale_text => out.push(Alert::new(
                     AlertKind::ResaleTextChanged,
                     Severity::Info,
                     "⚠️ Ticketbörse wording changed",
                     format!("Before:\n{}\n\nAfter:\n{}\n\n{}", p.resale_text, cur.resale_text, url),
                 )),
-                _ => {}
+                (ResaleState::Empty, ResaleState::Empty) | (ResaleState::Available, ResaleState::Available) => {}
             }
 
-            match (p.main_sold_out, cur.main_sold_out) {
-                (true, false) => main_on_sale(&mut out),
-                (false, true) => out.push(Alert::new(
+            match (p.main, cur.main) {
+                // Fail open: coming back from Unknown straight to OnSale is
+                // treated as a drop rather than swallowed.
+                (MainStock::SoldOut | MainStock::Unknown, MainStock::OnSale) => main_on_sale(&mut out),
+                (MainStock::OnSale, MainStock::SoldOut) => out.push(Alert::new(
                     AlertKind::MainSoldOut,
                     Severity::Info,
                     "Main shop sold out again",
                     format!("The 'Ausverkauft' banner is back.\n\n{url}"),
                 )),
-                _ => {}
+                (MainStock::SoldOut, MainStock::SoldOut)
+                | (MainStock::SoldOut, MainStock::Unknown)
+                | (MainStock::OnSale, MainStock::OnSale)
+                | (MainStock::OnSale, MainStock::Unknown)
+                | (MainStock::Unknown, MainStock::SoldOut)
+                | (MainStock::Unknown, MainStock::Unknown) => {}
             }
         }
     }

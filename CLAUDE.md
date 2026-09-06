@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repository.
+Guidance for Claude Code when working in this repository. `AGENTS.md` is the equivalent for other
+coding agents and carries the same content, plus a section on the expected working method.
+**If you change one, mirror the change in the other.**
 
 ## What this is
 
@@ -32,11 +34,24 @@ the user, not a refactor.
 4. **The card is located by `.card-header` *text*, not by `.card-header h2`.** fatoni.shop renders
    that heading as a plain `<div>`. `tests/fixtures/real_available_one.html` is the regression test.
 
-5. **`main` must exit non-zero if either task returns.** fly's restart policy is `always`, but
-   returning `Ok(())` on task death previously made a dead watcher look like a clean shutdown.
+5. **`main` must exit non-zero if any long-running task returns, including the bot dispatcher in
+   discovery mode.** fly's restart policy is `always`, but returning `Ok(())` on task death
+   previously made a dead watcher look like a clean shutdown.
 
 6. **The `live_site` test stays `#[ignore]d`.** CI must not depend on sbtix.de being up, and must
    not add traffic to a small shop on every push.
+
+7. **Bot commands are answered only from the configured chat.** `AllowedChat` in `bot.rs` gates
+   `/status` and `/ack`; discovery mode (`SB_WATCHER_DISCOVERY=1`) is the only time every chat is
+   answered. A stranger must never be able to silence reminders.
+
+8. **State updates are pure; sending happens outside the lock.** `apply_*` and `poll_once` in
+   `watcher.rs` return the alerts to send. `run_watcher` sends them after releasing `shared`, then
+   records delivery with `record_delivery`. Do not put network calls back inside the lock.
+
+9. **"Delivered" means at least one channel accepted the message.** `MultiNotifier` returns `Err`
+   when every channel failed or no channels exist. An undelivered Max alert is retried on the next
+   poll, even if that poll cannot produce a new observation.
 
 ## Layout
 
@@ -44,7 +59,7 @@ the user, not a refactor.
 |---|---|
 | `src/parse.rs` | **Pure.** HTML → `PageObservation`. The core; most tests live here. |
 | `src/state.rs` | **Pure.** Previous vs current observation → `Vec<Alert>`. |
-| `src/watcher.rs` | Poll loop, backoff, capped repeats, heartbeat, structure warning. |
+| `src/watcher.rs` | Pure poll fold (`poll_once`), backoff, per-condition reminders with retry, heartbeat, startup message. `run_watcher` is the only I/O. |
 | `src/notify.rs` | `Notifier` trait, Telegram, ntfy, fan-out, and the recording fake. |
 | `src/fetch.rs` | HTTP client, timeouts, and the fixture-injection escape hatch. |
 | `src/bot.rs` | Telegram commands and chat-id discovery. |
@@ -69,7 +84,7 @@ unfamiliar markup is the likeliest real case.
 ## Commands
 
 ```fish
-cargo test                                              # 57 tests, fully offline
+cargo test                                              # 89 tests, fully offline
 cargo test --test live_site -- --ignored --nocapture    # hits the real page
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
@@ -106,6 +121,17 @@ job. The bot token must **not** be added to GitHub — CI never talks to Telegra
   Changing either can silently break the image.
 - **The scratch image has no shell** — `fly ssh console` gives no prompt. Use `fly logs`.
 - **`takecell` is pinned to 0.1.1**; 0.1.2 requires rustc 1.96 and the pin is 1.93.
+- **Only ONE process may long-poll a bot token.** Telegram terminates the older `getUpdates`
+  consumer, so running the binary locally while the fly machine is up makes the two instances
+  repeatedly kill each other's listener, logging `Api(TerminatedByOtherGetUpdates)`. Sending is
+  unaffected (alerts still arrive), but `/status` and `/ack` become unreliable. Before any local
+  run that needs commands to work — the fixture rehearsal especially — stop the machine first:
+  `fly machine stop <id> --app sb-watcher`, then start it again afterwards. Restarting is safe: the
+  watcher re-baselines and re-alerts if stock is up, which is the safe direction.
+- **To discover a group's chat id you do not need a local run at all.** The deployed bot logs every
+  chat id it sees, so send a command in the group and read it out of `fly logs`. In a group,
+  Telegram's privacy mode means only *commands* reach the bot, so send `/help`, not a plain
+  message. The bot does not need to be a group admin, and should not be.
 
 ## Design docs
 

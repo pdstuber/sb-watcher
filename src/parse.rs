@@ -1,6 +1,4 @@
 use scraper::{ElementRef, Html, Selector};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
 pub const EMPTY_MARKER: &str = "Es gibt aktuell keine Tickets zum Weiterverkauf";
@@ -21,6 +19,17 @@ pub enum ResaleState {
     Available,
 }
 
+/// State of the main (non-resale) product. Unlike `ResaleState` this is a
+/// positive match on a specific frame, so it carries an explicit `Unknown`:
+/// a renamed frame must become a structure warning, never an on-sale alert.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainStock {
+    SoldOut,
+    OnSale,
+    /// `turbo-frame#ticket_detail` was not found.
+    Unknown,
+}
+
 /// One offer on the exchange. Enrichment only — never used to decide `ResaleState`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
@@ -34,7 +43,7 @@ pub struct PageObservation {
     pub resale: ResaleState,
     pub resale_text: String,
     pub listings: Vec<Listing>,
-    pub main_sold_out: bool,
+    pub main: MainStock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,13 +66,6 @@ impl std::error::Error for ParseError {}
 /// whitespace under Rust's `char::is_whitespace`.
 pub fn normalize_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Short non-cryptographic fingerprint, for logs and status messages only.
-pub fn fingerprint(s: &str) -> String {
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    format!("{:016x}", h.finish())
 }
 
 fn text_of(el: &ElementRef) -> String {
@@ -110,15 +112,16 @@ pub fn classify(html: &str) -> Result<PageObservation, ParseError> {
 
     let listings = parse_listings(&card);
 
-    let main_sold_out = doc
-        .select(&TICKET_FRAME)
-        .next()
-        .is_some_and(|frame| frame.select(&DANGER).any(|a| text_of(&a).contains(SOLD_OUT_MARKER)));
+    let main = match doc.select(&TICKET_FRAME).next() {
+        None => MainStock::Unknown,
+        Some(frame) if frame.select(&DANGER).any(|a| text_of(&a).contains(SOLD_OUT_MARKER)) => MainStock::SoldOut,
+        Some(_) => MainStock::OnSale,
+    };
 
     Ok(PageObservation {
         resale,
         resale_text,
         listings,
-        main_sold_out,
+        main,
     })
 }

@@ -17,6 +17,7 @@ use std::collections::HashMap;
 async fn live_page_still_parses() {
     let mut env = HashMap::new();
     env.insert("TELOXIDE_TOKEN".to_string(), "unused:for-parsing-only".to_string());
+    env.insert("TELEGRAM_CHAT_ID".to_string(), "1".to_string());
     let cfg = Config::from_map(&env).unwrap();
 
     let html = Fetcher::from_config(&cfg)
@@ -30,7 +31,7 @@ async fn live_page_still_parses() {
     let obs = classify(&html).expect("the Ticketbörse card must still be findable");
 
     println!("resale        : {:?}", obs.resale);
-    println!("main_sold_out : {}", obs.main_sold_out);
+    println!("main          : {:?}", obs.main);
     println!("listings      : {}", obs.listings.len());
     println!("card text     : {}", obs.resale_text);
 

@@ -1,7 +1,12 @@
 use crate::config::Config;
 use anyhow::Result;
+use futures_util::StreamExt;
 use std::path::PathBuf;
 use std::time::Duration;
+
+/// The real pages are ~100 KB. Anything far beyond that is not the page we
+/// want, and buffering it unbounded on a 256 MB machine is how a watcher dies.
+pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchError {
@@ -10,6 +15,7 @@ pub enum FetchError {
     Http(u16),
     Network(String),
     Io(String),
+    TooLarge(usize),
 }
 
 impl FetchError {
@@ -25,6 +31,7 @@ impl std::fmt::Display for FetchError {
             FetchError::Http(c) => write!(f, "HTTP {c}"),
             FetchError::Network(e) => write!(f, "network error: {e}"),
             FetchError::Io(e) => write!(f, "fixture read error: {e}"),
+            FetchError::TooLarge(max) => write!(f, "response larger than {max} bytes"),
         }
     }
 }
@@ -73,7 +80,23 @@ impl Fetcher {
             return Err(FetchError::Http(status));
         }
 
-        resp.text().await.map_err(|e| FetchError::Network(e.to_string()))
+        if resp.content_length().is_some_and(|n| n > MAX_BODY_BYTES as u64) {
+            return Err(FetchError::TooLarge(MAX_BODY_BYTES));
+        }
+
+        // Stream so the cap applies before the bytes land in memory, not after.
+        let mut stream = resp.bytes_stream();
+        let mut body: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| FetchError::Network(e.to_string()))?;
+            if body.len() + chunk.len() > MAX_BODY_BYTES {
+                return Err(FetchError::TooLarge(MAX_BODY_BYTES));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        // The site serves UTF-8; lossy decoding is acceptable for a page we only
+        // scan for a marker string.
+        Ok(String::from_utf8_lossy(&body).into_owned())
     }
 }
 
@@ -86,6 +109,7 @@ mod tests {
     fn cfg_with(k: &str, v: &str) -> Config {
         let mut m = HashMap::new();
         m.insert("TELOXIDE_TOKEN".to_string(), "123:ABC".to_string());
+        m.insert("TELEGRAM_CHAT_ID".to_string(), "1".to_string());
         m.insert(k.to_string(), v.to_string());
         Config::from_map(&m).unwrap()
     }
@@ -109,6 +133,7 @@ mod tests {
     async fn fetcher_for(server: &wiremock::MockServer) -> Fetcher {
         let mut m = HashMap::new();
         m.insert("TELOXIDE_TOKEN".to_string(), "123:ABC".to_string());
+        m.insert("TELEGRAM_CHAT_ID".to_string(), "1".to_string());
         m.insert("TARGET_URL".to_string(), format!("{}/ticket", server.uri()));
         Fetcher::from_config(&Config::from_map(&m).unwrap()).unwrap()
     }
@@ -167,6 +192,7 @@ mod tests {
     async fn an_unreachable_host_is_a_network_error() {
         let mut m = HashMap::new();
         m.insert("TELOXIDE_TOKEN".to_string(), "123:ABC".to_string());
+        m.insert("TELEGRAM_CHAT_ID".to_string(), "1".to_string());
         // Reserved TEST-NET-1 address, guaranteed not to route anywhere.
         m.insert("TARGET_URL".to_string(), "http://192.0.2.1:9/ticket".to_string());
         let f = Fetcher::from_config(&Config::from_map(&m).unwrap()).unwrap();
@@ -179,5 +205,12 @@ mod tests {
         assert!(FetchError::Blocked(403).is_blocked());
         assert!(!FetchError::Http(500).is_blocked());
         assert!(!FetchError::Network("timeout".into()).is_blocked());
+    }
+
+    #[tokio::test]
+    async fn an_oversized_body_is_rejected_before_it_is_buffered() {
+        let big = "a".repeat(MAX_BODY_BYTES + 1);
+        let (_s, f) = respond_with(200, &big).await;
+        assert_eq!(f.fetch().await.unwrap_err(), FetchError::TooLarge(MAX_BODY_BYTES));
     }
 }

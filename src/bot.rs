@@ -1,8 +1,10 @@
-use crate::parse::ResaleState;
-use crate::watcher::AppState;
+use crate::parse::{MainStock, ResaleState};
+use crate::state::listing_summary;
+use crate::watcher::{AppState, REPEAT_CAP};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use teloxide::prelude::*;
+use teloxide::types::ChatId;
 use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
 
@@ -17,6 +19,17 @@ pub enum Command {
     Help,
 }
 
+/// The one chat allowed to drive the bot. `None` means discovery mode, where
+/// every chat is answered so the user can learn their chat id.
+#[derive(Debug, Clone, Copy)]
+pub struct AllowedChat(pub Option<ChatId>);
+
+impl AllowedChat {
+    pub fn permits(self, chat: ChatId) -> bool {
+        self.0.is_none_or(|c| c == chat)
+    }
+}
+
 pub fn status_text(st: &AppState, now: DateTime<Utc>, url: &str) -> String {
     let uptime = now - st.started;
     let state = match &st.last {
@@ -24,15 +37,14 @@ pub fn status_text(st: &AppState, now: DateTime<Utc>, url: &str) -> String {
         Some(o) => {
             let resale = match o.resale {
                 ResaleState::Empty => "no resale tickets".to_string(),
-                ResaleState::Available => format!(
-                    "🎟️ TICKETS AVAILABLE\n{}",
-                    crate::state::listing_summary(&o.listings, &o.resale_text)
-                ),
+                ResaleState::Available => {
+                    format!("🎟️ TICKETS AVAILABLE\n{}", listing_summary(&o.listings, &o.resale_text))
+                }
             };
-            let main = if o.main_sold_out {
-                "main shop: sold out"
-            } else {
-                "main shop: ON SALE"
+            let main = match o.main {
+                MainStock::SoldOut => "main shop: sold out",
+                MainStock::OnSale => "main shop: ON SALE",
+                MainStock::Unknown => "main shop: UNKNOWN (product frame not found)",
             };
             format!("{resale}\n{main}")
         }
@@ -41,14 +53,11 @@ pub fn status_text(st: &AppState, now: DateTime<Utc>, url: &str) -> String {
         .last_change
         .map(|c| c.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|| "none since start".into());
-    let repeat = match &st.repeat {
-        Some(r) => format!(
-            "\nalerting: {} of {} reminders sent",
-            r.count,
-            crate::watcher::REPEAT_CAP
-        ),
-        None => String::new(),
-    };
+    let repeat: String = st
+        .repeats
+        .iter()
+        .map(|r| format!("\nalerting {:?}: {} of {} reminders sent", r.kind, r.count, REPEAT_CAP))
+        .collect();
     format!(
         "{state}\n\nchecks: {}\nuptime: {}h {}m\nlast change: {last_change}{repeat}\n\n{url}",
         st.checks,
@@ -63,7 +72,12 @@ async fn on_command(
     cmd: Command,
     shared: Arc<Mutex<AppState>>,
     url: String,
+    allowed: AllowedChat,
 ) -> ResponseResult<()> {
+    if !allowed.permits(msg.chat.id) {
+        log::warn!("ignoring command from unauthorised chat {}", msg.chat.id.0);
+        return Ok(());
+    }
     // Logged for commands too, not just plain messages: in a group the bot's
     // privacy mode means only commands reach it, so this is the only way to
     // discover a group's chat id.
@@ -77,10 +91,11 @@ async fn on_command(
         }
         Command::Ack => {
             let mut st = shared.lock().await;
-            if st.repeat.take().is_some() {
-                "Acknowledged — reminders stopped.".to_string()
-            } else {
+            if st.repeats.is_empty() {
                 "Nothing to acknowledge.".to_string()
+            } else {
+                st.repeats.clear();
+                "Acknowledged — reminders stopped.".to_string()
             }
         }
     };
@@ -90,14 +105,18 @@ async fn on_command(
 
 /// Any non-command message replies with the chat id, so first-time setup does
 /// not need a third-party bot to discover it.
-async fn on_message(bot: Bot, msg: Message) -> ResponseResult<()> {
+async fn on_message(bot: Bot, msg: Message, allowed: AllowedChat) -> ResponseResult<()> {
+    if !allowed.permits(msg.chat.id) {
+        log::warn!("ignoring message from unauthorised chat {}", msg.chat.id.0);
+        return Ok(());
+    }
     log::info!("DISCOVERED CHAT ID: {}", msg.chat.id.0);
     bot.send_message(msg.chat.id, format!("This chat's id is: {}", msg.chat.id.0))
         .await?;
     Ok(())
 }
 
-pub async fn run_bot(bot: Bot, shared: Arc<Mutex<AppState>>, url: String) {
+pub async fn run_bot(bot: Bot, shared: Arc<Mutex<AppState>>, url: String, allowed: AllowedChat) {
     let handler = Update::filter_message()
         .branch(dptree::entry().filter_command::<Command>().endpoint(on_command))
         .branch(dptree::endpoint(on_message));
@@ -105,7 +124,7 @@ pub async fn run_bot(bot: Bot, shared: Arc<Mutex<AppState>>, url: String) {
     // No listener passed: teloxide defaults to long polling (getUpdates), so no
     // public URL or inbound port is required.
     Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![shared, url])
+        .dependencies(dptree::deps![shared, url, allowed])
         .enable_ctrlc_handler()
         .build()
         .dispatch()
@@ -115,7 +134,7 @@ pub async fn run_bot(bot: Bot, shared: Arc<Mutex<AppState>>, url: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::PageObservation;
+    use crate::parse::{MainStock, PageObservation};
     use crate::watcher::AppState;
     use chrono::TimeZone;
 
@@ -131,7 +150,7 @@ mod tests {
             resale: ResaleState::Empty,
             resale_text: "Ticketbörse Es gibt aktuell keine Tickets zum Weiterverkauf.".into(),
             listings: vec![],
-            main_sold_out: true,
+            main: MainStock::SoldOut,
         });
         let s = status_text(&st, now(), "https://example.test");
         assert!(s.contains("42"), "check count must be visible: {s}");
@@ -145,7 +164,7 @@ mod tests {
             resale: ResaleState::Available,
             resale_text: "Ticketbörse In den Warenkorb".into(),
             listings: vec![],
-            main_sold_out: true,
+            main: MainStock::SoldOut,
         });
         assert!(status_text(&st, now(), "u").contains("TICKETS AVAILABLE"));
     }
@@ -154,5 +173,18 @@ mod tests {
     fn status_before_the_first_check_says_so() {
         let st = AppState::new(now());
         assert!(status_text(&st, now(), "u").contains("no check completed yet"));
+    }
+
+    #[test]
+    fn only_the_configured_chat_is_permitted() {
+        let mine = ChatId(42);
+        let stranger = ChatId(7);
+        assert!(AllowedChat(Some(mine)).permits(mine));
+        assert!(
+            !AllowedChat(Some(mine)).permits(stranger),
+            "a stranger must not be able to /ack"
+        );
+        // Discovery mode: nothing configured yet, so every chat is answered.
+        assert!(AllowedChat(None).permits(stranger));
     }
 }

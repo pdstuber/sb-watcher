@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    # rust-toolchain.toml pins 1.93; a bump that raises MSRV past it fails CI
+    # loudly (see takecell 0.1.2 in CLAUDE.md), which is the point.
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

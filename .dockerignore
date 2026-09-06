@@ -3,5 +3,4 @@ target
 .github
 .env
 docs
-screen.png
 rustfmt.toml

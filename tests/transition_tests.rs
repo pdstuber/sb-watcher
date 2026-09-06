@@ -1,14 +1,14 @@
-use sb_watcher::parse::{Listing, PageObservation, ResaleState};
+use sb_watcher::parse::{Listing, MainStock, PageObservation, ResaleState};
 use sb_watcher::state::{transitions, Alert, AlertKind, Severity};
 
 const URL: &str = "https://example.test/ticket";
 
-fn obs(resale: ResaleState, text: &str, main_sold_out: bool) -> PageObservation {
+fn obs(resale: ResaleState, text: &str, main: MainStock) -> PageObservation {
     PageObservation {
         resale,
         resale_text: text.to_string(),
         listings: vec![],
-        main_sold_out,
+        main,
     }
 }
 
@@ -16,7 +16,7 @@ fn empty() -> PageObservation {
     obs(
         ResaleState::Empty,
         "Ticketbörse Es gibt aktuell keine Tickets zum Weiterverkauf.",
-        true,
+        MainStock::SoldOut,
     )
 }
 
@@ -24,7 +24,7 @@ fn available() -> PageObservation {
     let mut o = obs(
         ResaleState::Available,
         "Ticketbörse Festivalticket 222,00 In den Warenkorb",
-        true,
+        MainStock::SoldOut,
     );
     o.listings = vec![Listing {
         id: "voucher_swap_1".into(),
@@ -56,7 +56,7 @@ fn first_run_main_on_sale_alerts_immediately() {
     let cur = obs(
         ResaleState::Empty,
         "Ticketbörse Es gibt aktuell keine Tickets zum Weiterverkauf.",
-        false,
+        MainStock::OnSale,
     );
     let a = transitions(None, &cur, URL);
     assert_eq!(kinds(&a), vec![AlertKind::MainOnSale]);
@@ -112,7 +112,7 @@ fn wording_change_while_still_empty_is_informational() {
     let changed = obs(
         ResaleState::Empty,
         "Ticketbörse Neuer Text. Es gibt aktuell keine Tickets zum Weiterverkauf.",
-        true,
+        MainStock::SoldOut,
     );
     let a = transitions(Some(&empty()), &changed, URL);
     assert_eq!(kinds(&a), vec![AlertKind::ResaleTextChanged]);
@@ -121,7 +121,7 @@ fn wording_change_while_still_empty_is_informational() {
 
 #[test]
 fn main_going_on_sale_is_a_max_alert() {
-    let on_sale = obs(ResaleState::Empty, empty().resale_text.as_str(), false);
+    let on_sale = obs(ResaleState::Empty, empty().resale_text.as_str(), MainStock::OnSale);
     let a = transitions(Some(&empty()), &on_sale, URL);
     assert_eq!(kinds(&a), vec![AlertKind::MainOnSale]);
     assert_eq!(a[0].severity, Severity::Max);
@@ -129,7 +129,7 @@ fn main_going_on_sale_is_a_max_alert() {
 
 #[test]
 fn main_selling_out_again_is_informational() {
-    let on_sale = obs(ResaleState::Empty, empty().resale_text.as_str(), false);
+    let on_sale = obs(ResaleState::Empty, empty().resale_text.as_str(), MainStock::OnSale);
     let a = transitions(Some(&on_sale), &empty(), URL);
     assert_eq!(kinds(&a), vec![AlertKind::MainSoldOut]);
     assert_eq!(a[0].severity, Severity::Info);
@@ -137,7 +137,7 @@ fn main_selling_out_again_is_informational() {
 
 #[test]
 fn resale_and_main_can_fire_together() {
-    let both = obs(ResaleState::Available, "Ticketbörse tickets!", false);
+    let both = obs(ResaleState::Available, "Ticketbörse tickets!", MainStock::OnSale);
     let a = transitions(Some(&empty()), &both, URL);
     assert_eq!(kinds(&a), vec![AlertKind::ResaleAvailable, AlertKind::MainOnSale]);
 }
@@ -147,4 +147,31 @@ fn text_change_is_not_reported_alongside_a_state_change() {
     // Empty -> Available always changes the text; reporting both would be noise.
     let a = transitions(Some(&empty()), &available(), URL);
     assert!(!kinds(&a).contains(&AlertKind::ResaleTextChanged));
+}
+
+#[test]
+fn listing_churn_while_available_is_not_a_wording_change() {
+    // During a drop the card text changes every time an offer sells. That is
+    // not the detector going blind and must not spam Info alerts.
+    let mut before = available();
+    before.resale_text = "Ticketbörse Festivalticket 222,00 Festivalticket 222,00 In den Warenkorb".into();
+    let after = available();
+    assert!(transitions(Some(&before), &after, URL).is_empty());
+}
+
+#[test]
+fn unknown_main_frame_is_not_an_on_sale_alert() {
+    let cur = obs(ResaleState::Empty, empty().resale_text.as_str(), MainStock::Unknown);
+    assert!(
+        transitions(Some(&empty()), &cur, URL).is_empty(),
+        "Unknown is a structure problem, not a drop"
+    );
+    assert!(transitions(None, &cur, URL).is_empty());
+}
+
+#[test]
+fn recovering_from_unknown_straight_to_on_sale_fails_open() {
+    let prev = obs(ResaleState::Empty, empty().resale_text.as_str(), MainStock::Unknown);
+    let cur = obs(ResaleState::Empty, empty().resale_text.as_str(), MainStock::OnSale);
+    assert_eq!(kinds(&transitions(Some(&prev), &cur, URL)), vec![AlertKind::MainOnSale]);
 }
