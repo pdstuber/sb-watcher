@@ -116,7 +116,7 @@ on offer. Then try:
 ## Tests
 
 ```fish
-cargo test                                        # 47 tests, no network
+cargo test                                        # 57 tests, no network
 cargo test --test live_site -- --ignored --nocapture   # checks the real page
 ```
 
@@ -133,7 +133,17 @@ fly logs
 ```
 
 `fly.toml` has no `[http_service]` and no `PORT` — Telegram long polling needs no inbound port, and
-omitting the service is what stops fly auto-stopping the machine.
+`auto_stop_machines` applies only to services, so omitting the service is what keeps this running
+24/7. `[[restart]] policy = 'always'` is set deliberately: fly's default is `on-failure`, which
+would not restart a process that exited zero. `main` also exits non-zero if either task ever
+returns, so a dead watcher can never look like a clean shutdown.
+
+## CI
+
+`.github/workflows/ci.yml` runs `fmt`, `clippy`, the test suite and a Docker build on every push
+and PR, then deploys to fly from `main` only. It needs exactly one secret, `FLY_API_TOKEN`
+(`fly tokens create deploy`). The bot token is deliberately **not** a GitHub secret — it lives in
+`fly secrets`, and CI never talks to Telegram.
 
 The runtime image is `FROM scratch` (~4 MB). That works because TLS roots come from `webpki-roots`
 compiled into the binary rather than a system `ca-certificates` package, and because the rustls
