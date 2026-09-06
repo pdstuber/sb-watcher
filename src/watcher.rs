@@ -202,11 +202,7 @@ pub async fn apply_structure_error<N: Notifier + ?Sized>(
 
 /// The dead-man's switch. Without it, silence is ambiguous between "no tickets"
 /// and "the process died three weeks ago". Returns whether a heartbeat was sent.
-pub async fn maybe_heartbeat<N: Notifier + ?Sized>(
-    st: &mut AppState,
-    now: DateTime<Utc>,
-    notifier: &N,
-) -> bool {
+pub async fn maybe_heartbeat<N: Notifier + ?Sized>(st: &mut AppState, now: DateTime<Utc>, notifier: &N) -> bool {
     if now - st.last_heartbeat < ChronoDuration::hours(HEARTBEAT_EVERY_HOURS) {
         return false;
     }
@@ -384,7 +380,10 @@ mod tests {
         let n = FakeNotifier::new();
         let mut st = AppState::new(t(0));
 
-        assert!(apply_structure_error(&mut st, t(0), "url", &n).await, "first one must warn");
+        assert!(
+            apply_structure_error(&mut st, t(0), "url", &n).await,
+            "first one must warn"
+        );
         assert_eq!(n.sent().len(), 1);
         assert_eq!(n.sent()[0].kind, AlertKind::StructureChanged);
 

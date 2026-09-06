@@ -1,14 +1,25 @@
 app = 'sb-watcher'
 primary_region = 'fra'
 
-[build]
-
 [env]
   RUST_LOG = 'info'
 
 # No [http_service] and no PORT: the bot uses Telegram long polling, so nothing
-# listens for inbound connections. Omitting the service is also what keeps fly
-# from auto-stopping the machine — this must run 24/7 to catch a ticket drop.
+# listens for inbound connections. auto_stop_machines / min_machines_running
+# apply only to services, so omitting the service is what keeps this running
+# 24/7 rather than being auto-stopped.
+
+# fly's default is "on-failure", which only restarts on a non-zero exit. This
+# app must come back no matter how it died — a watcher that stays down through
+# a ticket drop has failed at its only job.
+[[restart]]
+  policy = 'always'
+
+# The teloxide dispatcher installs a SIGINT handler (ctrlc_handler feature), so
+# the default kill_signal of SIGINT gives it a clean shutdown. Stated
+# explicitly rather than relying on the default.
+kill_signal = 'SIGINT'
+kill_timeout = '10s'
 
 [[vm]]
   memory = '256mb'

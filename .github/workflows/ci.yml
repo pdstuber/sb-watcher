@@ -51,3 +51,23 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    name: deploy to fly.io
+    # Only from main, and only once fmt/clippy/tests and the image build pass.
+    # A watcher that is down when a ticket drops has failed at its one job, so
+    # nothing ships on a red suite.
+    needs: [test, image]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      # Never let two deploys race; a queued one supersedes the running one.
+      group: deploy-fly
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

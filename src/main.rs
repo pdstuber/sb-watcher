@@ -63,9 +63,13 @@ async fn main() -> Result<()> {
     let watcher = tokio::spawn(run_watcher(cfg.clone(), fetcher, notifier.clone(), shared.clone()));
     let commands = tokio::spawn(run_bot(bot, shared, cfg.target_url.clone()));
 
+    // Neither task should ever finish: run_watcher loops forever and the bot
+    // dispatcher runs until shutdown. If one does return, the process MUST exit
+    // non-zero — fly's default restart policy is "on-failure", so returning
+    // Ok(()) here would look like a clean shutdown and the machine would never
+    // be restarted, leaving the watcher silently dead.
     tokio::select! {
-        _ = watcher => log::error!("watcher task exited unexpectedly"),
-        _ = commands => log::error!("bot task exited unexpectedly"),
+        _ = watcher => anyhow::bail!("watcher task exited unexpectedly — restarting"),
+        _ = commands => anyhow::bail!("bot task exited unexpectedly — restarting"),
     }
-    Ok(())
 }
