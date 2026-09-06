@@ -1,5 +1,9 @@
 # Review Fixes Implementation Plan
 
+> **STATUS: COMPLETED.** Every task here was implemented, reviewed and merged (the post-review hardening).
+> Kept as a record of what was done and why. **Do not execute it again.** `CLAUDE.md` and
+> `AGENTS.md` are authoritative for current behaviour.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the operational gaps found in the 2026-09-06 code review so that a *degraded* watcher can never look healthy, without touching the inverted detector.

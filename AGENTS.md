@@ -192,14 +192,3 @@ and records the reconnaissance: no API, no JavaScript, `robots.txt` permits it, 
 string is platform boilerplate rather than shop-specific copy. Read it before changing detection
 behaviour. It embeds a screenshot of the card in its empty state, which is the visual source of
 the two detector constants.
-
-## In-flight work
-
-Branch `fix/review-2026-09-06` is executing a 16-task plan that fixes the findings of a full code
-review. **If you are picking that up, read `docs/HANDOVER-2026-09-06.md` first** — it records
-exactly which tasks are done, which is half-finished, the expected test count after each task, and
-the judgement calls already made that should not be silently undone.
-
-The plan itself, with the exact code for every remaining task, is
-`docs/superpowers/plans/2026-09-06-review-fixes.md`. You should not need to design anything; if you
-find yourself inventing an approach, re-read the task.

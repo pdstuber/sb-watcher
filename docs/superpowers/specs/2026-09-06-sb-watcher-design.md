@@ -1,6 +1,22 @@
 # sb-watcher — design
 
 **Date:** 2026-09-06
+
+**Status: implemented and shipped.** This document records the reasoning behind the design and is
+kept for that reason, not as a description of the current code. `CLAUDE.md` and `AGENTS.md` are
+authoritative for present behaviour. A later review changed some of the details below:
+
+- `TELEGRAM_CHAT_ID` is now **required**. Discovery mode is an explicit opt-in via
+  `SB_WATCHER_DISCOVERY=1`, because a blank value used to produce a silently non-watching deploy.
+- `PageObservation.main_sold_out: bool` is now `main: MainStock`, a tri-state of
+  `SoldOut | OnSale | Unknown`, so a renamed product frame raises a structure warning instead of a
+  false "back on sale" alert.
+- The `apply_*` functions are synchronous and return the alerts to send; `run_watcher` sends them
+  after releasing the state lock, and retries any max-severity alert whose delivery failed.
+- Reminders are tracked per open condition rather than in a single slot.
+- Bot commands are answered only from the configured chat.
+
+The reconnaissance, the inverted-detector argument and the fixture rationale below all still hold.
 **Status:** approved for implementation
 
 ## Problem

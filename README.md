@@ -53,14 +53,27 @@ it looked healthy.
    set -x SB_WATCHER_DISCOVERY 1
    cargo run
    ```
-3. Make the alert loud enough to wake you. **On iPhone** this means Telegram, not ntfy:
+   **In a group, send a command such as `/help`, not a plain message.** Telegram's privacy mode
+   delivers only commands to a bot in a group, so a plain message gets no reply and looks broken.
+   The bot does not need to be a group admin, and should not be. Group ids are negative.
+
+   If the watcher is already deployed you can skip the local run entirely: send `/help` in the
+   group and read the id out of `fly logs`. Only one process may long-poll a bot token, so a local
+   run while the deployed one is up makes the two fight over `getUpdates`.
+
+3. **Point the watcher at exactly one chat.** `TELEGRAM_CHAT_ID` is required, and the bot answers
+   `/status` and `/ack` only from that chat. Messages from anywhere else are ignored without a
+   reply, so a stranger who finds the bot cannot silence your reminders mid-drop. If you later move
+   to a different group, update the secret or the bot will appear dead there.
+4. Make the alert loud enough to wake you. **On iPhone** this means Telegram, not ntfy:
    - iOS Settings → Focus → Do Not Disturb → **Allowed Apps** → add Telegram.
-   - In Telegram, open the bot chat → Notifications → set a distinct, loud custom sound.
+   - In Telegram, open that chat → Notifications → set a distinct, loud custom sound. If it is a
+     group, make sure the group itself is not muted.
 
    The 5-minute repeat (six times, 30 minutes) is the real safety net here — a single push is easy
    to sleep through, six spread over half an hour is not.
 
-4. Optional, and **only worth it on Android**: set `NTFY_TOPIC` to an unguessable string, install the
+5. Optional, and **only worth it on Android**: set `NTFY_TOPIC` to an unguessable string, install the
    [ntfy app](https://ntfy.sh/), subscribe, and set the topic to max priority. On Android that
    genuinely bypasses Do Not Disturb. **On iOS it does not** — the ntfy app has no Critical Alerts
    entitlement, so a max-priority ntfy push is no louder than a Telegram one, and it only adds
