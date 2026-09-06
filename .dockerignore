@@ -1,6 +1,7 @@
 target
 .git
+.github
 .env
 docs
-tests
 screen.png
+rustfmt.toml

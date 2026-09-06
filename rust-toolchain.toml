@@ -1,0 +1,7 @@
+# Pin the toolchain so builds are reproducible across this machine, fly's
+# remote builder and CI. Without this, a transitive dependency raising its
+# MSRV breaks the build with a confusing error at an arbitrary time — which
+# is exactly what happened with takecell 0.1.2 requiring rustc 1.96.
+[toolchain]
+channel = "1.93"
+components = ["rustfmt", "clippy"]

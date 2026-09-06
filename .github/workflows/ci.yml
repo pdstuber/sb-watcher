@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail on warnings in CI without needing -D warnings on every invocation.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the version, so this installs exactly that.
+      - name: Install Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features
+
+      # Excludes the #[ignore]d live_site test: it hits sbtix.de, so it would
+      # make CI depend on a third party staying up and would add avoidable
+      # traffic to a small shop on every push.
+      - name: Tests
+        run: cargo test --all-features
+
+  image:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Proves the scratch/musl image still builds. It is the artifact that
+      # actually ships, and it breaks in ways `cargo build` cannot catch.
+      - name: Build runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: deploy to fly.io
+    # Only from main, and only once fmt/clippy/tests and the image build pass.
+    # A watcher that is down when a ticket drops has failed at its one job, so
+    # nothing ships on a red suite.
+    needs: [test, image]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      # Never let two deploys race; a queued one supersedes the running one.
+      group: deploy-fly
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
