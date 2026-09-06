@@ -87,6 +87,9 @@ impl MultiNotifier {
 #[async_trait]
 impl Notifier for MultiNotifier {
     async fn send(&self, alert: &Alert) -> Result<()> {
+        // Every alert funnels through here, so this is the one place that gives
+        // an operator a record of what was actually sent and when.
+        log::info!("ALERT [{:?}] {}", alert.severity, alert.title);
         let mut errors = Vec::new();
         for c in &self.channels {
             // Deliberately no early return: every channel gets its attempt. If
