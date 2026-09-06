@@ -67,11 +67,21 @@ jobs:
       RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
-      # Informational: fails the check on a RUSTSEC advisory but does not gate
-      # deploy, since a down watcher is worse than a theoretical advisory.
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      # Run cargo-audit directly rather than via rustsec/audit-check. That
+      # action reports by creating a check run, which needs `checks: write`;
+      # granting a third-party action write access for a purely informational
+      # job is a worse trade than just reading the exit code. `--locked` uses
+      # cargo-audit's own lockfile, which is the other half of the MSRV fix.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      # Informational: fails this check on a RUSTSEC *vulnerability* but does
+      # not gate deploy, since a down watcher is worse than a theoretical
+      # advisory. Unmaintained-crate warnings deliberately do not fail it — no
+      # `--deny warnings` — because an unmaintained transitive dependency must
+      # never block shipping a fix to the watcher.
+      - name: Audit
+        run: cargo audit
 
   deploy:
     name: deploy to fly.io
