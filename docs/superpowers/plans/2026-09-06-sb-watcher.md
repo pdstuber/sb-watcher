@@ -1,5 +1,9 @@
 # sb-watcher Implementation Plan
 
+> **STATUS: COMPLETED.** Every task here was implemented, reviewed and merged (the initial build).
+> Kept as a record of what was done and why. **Do not execute it again.** `CLAUDE.md` and
+> `AGENTS.md` are authoritative for current behaviour.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A Rust daemon that polls the SUMMER BREEZE 2027 Ticketbörse every 60s and alerts via Telegram and ntfy within about a minute of resale stock appearing.
