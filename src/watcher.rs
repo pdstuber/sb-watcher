@@ -168,6 +168,66 @@ pub async fn apply_failure<N: Notifier + ?Sized>(
     }
 }
 
+/// Handle a page that parsed but had no Ticketbörse card.
+///
+/// Rate-limited to one warning per 24h so a permanent redesign does not spam,
+/// but it must never be silent: treating this as "all quiet" would leave the
+/// watcher blind while looking healthy. Returns whether a warning was sent.
+pub async fn apply_structure_error<N: Notifier + ?Sized>(
+    st: &mut AppState,
+    now: DateTime<Utc>,
+    url: &str,
+    notifier: &N,
+) -> bool {
+    let due = st
+        .last_structure_warn
+        .map(|w| now - w >= ChronoDuration::hours(24))
+        .unwrap_or(true);
+    if !due {
+        return false;
+    }
+    st.last_structure_warn = Some(now);
+    let alert = Alert::new(
+        AlertKind::StructureChanged,
+        Severity::Info,
+        "⚠️ Page structure changed",
+        format!(
+            "The Ticketbörse card could not be found. sb-watcher may be blind and needs a code \
+             update.\n\n{url}"
+        ),
+    );
+    let _ = notifier.send(&alert).await;
+    true
+}
+
+/// The dead-man's switch. Without it, silence is ambiguous between "no tickets"
+/// and "the process died three weeks ago". Returns whether a heartbeat was sent.
+pub async fn maybe_heartbeat<N: Notifier + ?Sized>(
+    st: &mut AppState,
+    now: DateTime<Utc>,
+    notifier: &N,
+) -> bool {
+    if now - st.last_heartbeat < ChronoDuration::hours(HEARTBEAT_EVERY_HOURS) {
+        return false;
+    }
+    st.last_heartbeat = now;
+    let alert = Alert::new(
+        AlertKind::Heartbeat,
+        Severity::Info,
+        "✅ sb-watcher still running",
+        format!(
+            "{} checks since {}. Last change: {}.",
+            st.checks,
+            st.started.format("%Y-%m-%d %H:%M UTC"),
+            st.last_change
+                .map(|c| c.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| "none".into())
+        ),
+    );
+    let _ = notifier.send(&alert).await;
+    true
+}
+
 pub async fn run_watcher<N: Notifier + ?Sized>(
     cfg: Config,
     fetcher: Fetcher,
@@ -189,25 +249,7 @@ pub async fn run_watcher<N: Notifier + ?Sized>(
                     cfg.poll_interval
                 }
                 Err(ParseError::CardNotFound) => {
-                    // Never silently treat this as "all quiet".
-                    let due = st
-                        .last_structure_warn
-                        .map(|w| now - w >= ChronoDuration::hours(24))
-                        .unwrap_or(true);
-                    if due {
-                        st.last_structure_warn = Some(now);
-                        let alert = Alert::new(
-                            AlertKind::StructureChanged,
-                            Severity::Info,
-                            "⚠️ Page structure changed",
-                            format!(
-                                "The Ticketbörse card could not be found. sb-watcher may be \
-                                 blind and needs a code update.\n\n{}",
-                                cfg.target_url
-                            ),
-                        );
-                        let _ = notifier.send(&alert).await;
-                    }
+                    apply_structure_error(&mut st, now, &cfg.target_url, notifier.as_ref()).await;
                     cfg.poll_interval
                 }
             },
@@ -223,25 +265,7 @@ pub async fn run_watcher<N: Notifier + ?Sized>(
             }
         };
 
-        // Dead-man's switch: silence must never be ambiguous between
-        // "no tickets" and "the process died".
-        if now - st.last_heartbeat >= ChronoDuration::hours(HEARTBEAT_EVERY_HOURS) {
-            st.last_heartbeat = now;
-            let alert = Alert::new(
-                AlertKind::Heartbeat,
-                Severity::Info,
-                "✅ sb-watcher still running",
-                format!(
-                    "{} checks since {}. Last change: {}.",
-                    st.checks,
-                    st.started.format("%Y-%m-%d %H:%M UTC"),
-                    st.last_change
-                        .map(|c| c.format("%Y-%m-%d %H:%M UTC").to_string())
-                        .unwrap_or_else(|| "none".into())
-                ),
-            );
-            let _ = notifier.send(&alert).await;
-        }
+        maybe_heartbeat(&mut st, now, notifier.as_ref()).await;
 
         drop(st);
         tokio::time::sleep(wait).await;
@@ -350,6 +374,79 @@ mod tests {
             apply_observation(&mut st, available_obs(), t(m), "url", &n).await;
         }
         assert_eq!(n.sent().len(), 1 + REPEAT_CAP as usize, "stops after the cap");
+    }
+
+    // ---- the safety nets: these are what guarantee it never fails silently ----
+
+    #[tokio::test]
+    async fn missing_card_warns_immediately_but_only_once_per_day() {
+        // A site redesign must never read as "all quiet", and must not spam either.
+        let n = FakeNotifier::new();
+        let mut st = AppState::new(t(0));
+
+        assert!(apply_structure_error(&mut st, t(0), "url", &n).await, "first one must warn");
+        assert_eq!(n.sent().len(), 1);
+        assert_eq!(n.sent()[0].kind, AlertKind::StructureChanged);
+
+        // Every poll for the next day is suppressed.
+        assert!(!apply_structure_error(&mut st, t(60), "url", &n).await);
+        assert!(!apply_structure_error(&mut st, t(60 * 23), "url", &n).await);
+        assert_eq!(n.sent().len(), 1, "must not warn on every poll");
+
+        // But it re-warns after 24h, so a lasting breakage keeps nagging.
+        assert!(apply_structure_error(&mut st, t(60 * 24), "url", &n).await);
+        assert_eq!(n.sent().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_is_silent_until_due_then_fires_daily() {
+        let n = FakeNotifier::new();
+        let mut st = AppState::new(t(0));
+        st.checks = 1440;
+
+        assert!(!maybe_heartbeat(&mut st, t(60 * 23), &n).await, "not due yet");
+        assert!(n.sent().is_empty());
+
+        assert!(maybe_heartbeat(&mut st, t(60 * 24), &n).await, "due at 24h");
+        assert_eq!(n.sent().len(), 1);
+        assert_eq!(n.sent()[0].kind, AlertKind::Heartbeat);
+        assert!(n.sent()[0].body.contains("1440"), "must report the check count");
+
+        // The clock resets, so it is quiet again for another day.
+        assert!(!maybe_heartbeat(&mut st, t(60 * 25), &n).await);
+        assert!(maybe_heartbeat(&mut st, t(60 * 48), &n).await);
+        assert_eq!(n.sent().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn transient_failures_are_not_reported_but_a_sustained_outage_is() {
+        let n = FakeNotifier::new();
+        let mut st = AppState::new(t(0));
+        let err = FetchError::Network("timeout".into());
+
+        apply_failure(&mut st, &err, t(0), "url", &n).await;
+        apply_failure(&mut st, &err, t(5), "url", &n).await;
+        assert!(n.sent().is_empty(), "a brief blip is not worth a message");
+
+        // 15 minutes of continuous failure means the watcher is genuinely blind.
+        apply_failure(&mut st, &err, t(15), "url", &n).await;
+        assert_eq!(n.sent().len(), 1);
+        assert_eq!(n.sent()[0].kind, AlertKind::FetchFailing);
+
+        // Only once per episode, not once per poll.
+        apply_failure(&mut st, &err, t(20), "url", &n).await;
+        apply_failure(&mut st, &err, t(120), "url", &n).await;
+        assert_eq!(n.sent().len(), 1, "must not repeat the outage warning every poll");
+    }
+
+    #[tokio::test]
+    async fn being_blocked_warns_at_once_without_waiting() {
+        // 403/429 means we are already blind, so the 15-minute grace does not apply.
+        let n = FakeNotifier::new();
+        let mut st = AppState::new(t(0));
+        apply_failure(&mut st, &FetchError::Blocked(429), t(0), "url", &n).await;
+        assert_eq!(n.sent().len(), 1);
+        assert_eq!(n.sent()[0].kind, AlertKind::FetchFailing);
     }
 
     #[tokio::test]

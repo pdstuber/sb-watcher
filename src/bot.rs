@@ -64,6 +64,11 @@ async fn on_command(
     shared: Arc<Mutex<AppState>>,
     url: String,
 ) -> ResponseResult<()> {
+    // Logged for commands too, not just plain messages: in a group the bot's
+    // privacy mode means only commands reach it, so this is the only way to
+    // discover a group's chat id.
+    log::info!("DISCOVERED CHAT ID: {}", msg.chat.id.0);
+
     let text = match cmd {
         Command::Help => Command::descriptions().to_string(),
         Command::Status => {

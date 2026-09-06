@@ -106,6 +106,73 @@ mod tests {
         ));
     }
 
+    async fn fetcher_for(server: &wiremock::MockServer) -> Fetcher {
+        let mut m = HashMap::new();
+        m.insert("TELOXIDE_TOKEN".to_string(), "123:ABC".to_string());
+        m.insert("TARGET_URL".to_string(), format!("{}/ticket", server.uri()));
+        Fetcher::from_config(&Config::from_map(&m).unwrap()).unwrap()
+    }
+
+    async fn respond_with(status: u16, body: &str) -> (wiremock::MockServer, Fetcher) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/ticket"))
+            .respond_with(ResponseTemplate::new(status).set_body_string(body))
+            .mount(&server)
+            .await;
+        let f = fetcher_for(&server).await;
+        (server, f)
+    }
+
+    #[tokio::test]
+    async fn a_200_returns_the_body() {
+        let (_s, f) = respond_with(200, "<html>hello</html>").await;
+        assert_eq!(f.fetch().await.unwrap(), "<html>hello</html>");
+    }
+
+    #[tokio::test]
+    async fn a_429_maps_to_blocked_not_a_generic_http_error() {
+        // Rate limiting must be distinguishable: it triggers a longer backoff
+        // and an immediate warning, because being throttled means being blind.
+        let (_s, f) = respond_with(429, "slow down").await;
+        let e = f.fetch().await.unwrap_err();
+        assert_eq!(e, FetchError::Blocked(429));
+        assert!(e.is_blocked());
+    }
+
+    #[tokio::test]
+    async fn a_403_maps_to_blocked() {
+        let (_s, f) = respond_with(403, "forbidden").await;
+        assert_eq!(f.fetch().await.unwrap_err(), FetchError::Blocked(403));
+    }
+
+    #[tokio::test]
+    async fn a_500_is_an_ordinary_http_error_not_a_block() {
+        // A server error is transient and must NOT trigger the blocked backoff.
+        let (_s, f) = respond_with(500, "boom").await;
+        let e = f.fetch().await.unwrap_err();
+        assert_eq!(e, FetchError::Http(500));
+        assert!(!e.is_blocked());
+    }
+
+    #[tokio::test]
+    async fn a_404_is_an_http_error() {
+        let (_s, f) = respond_with(404, "gone").await;
+        assert_eq!(f.fetch().await.unwrap_err(), FetchError::Http(404));
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_host_is_a_network_error() {
+        let mut m = HashMap::new();
+        m.insert("TELOXIDE_TOKEN".to_string(), "123:ABC".to_string());
+        // Reserved TEST-NET-1 address, guaranteed not to route anywhere.
+        m.insert("TARGET_URL".to_string(), "http://192.0.2.1:9/ticket".to_string());
+        let f = Fetcher::from_config(&Config::from_map(&m).unwrap()).unwrap();
+        assert!(matches!(f.fetch().await, Err(FetchError::Network(_))));
+    }
+
     #[test]
     fn blocking_statuses_are_recognised() {
         assert!(FetchError::Blocked(429).is_blocked());
