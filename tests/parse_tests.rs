@@ -23,7 +23,11 @@ fn card_text_excludes_the_rest_of_the_page() {
         !obs.resale_text.contains("Sichere dir jetzt dein Ticket"),
         "text bled outside the card into the Information section"
     );
-    assert!(obs.resale_text.len() < 1000, "unexpectedly large: {}", obs.resale_text.len());
+    assert!(
+        obs.resale_text.len() < 1000,
+        "unexpectedly large: {}",
+        obs.resale_text.len()
+    );
 }
 
 // ---------- real markup from shops that actually had stock ----------
@@ -33,8 +37,16 @@ fn real_fatoni_page_reports_ten_tickets_with_prices() {
     let obs = classify(&fixture("real_available_many.html")).unwrap();
     assert_eq!(obs.resale, ResaleState::Available);
     assert_eq!(obs.listings.len(), 10, "fatoni.shop had 10 offers");
-    assert!(obs.listings[0].name.contains("FATONI"), "got {:?}", obs.listings[0].name);
-    assert!(obs.listings[0].price.contains("45,20"), "got {:?}", obs.listings[0].price);
+    assert!(
+        obs.listings[0].name.contains("FATONI"),
+        "got {:?}",
+        obs.listings[0].name
+    );
+    assert!(
+        obs.listings[0].price.contains("45,20"),
+        "got {:?}",
+        obs.listings[0].price
+    );
     assert!(obs.listings[0].id.starts_with("voucher_swap_"));
 }
 
@@ -45,7 +57,11 @@ fn real_berq_page_reports_one_ticket() {
     let obs = classify(&fixture("real_available_one.html")).unwrap();
     assert_eq!(obs.resale, ResaleState::Available);
     assert_eq!(obs.listings.len(), 1);
-    assert!(obs.listings[0].price.contains("56,85"), "got {:?}", obs.listings[0].price);
+    assert!(
+        obs.listings[0].price.contains("56,85"),
+        "got {:?}",
+        obs.listings[0].price
+    );
 }
 
 // ---------- fail-open: the property that matters most ----------
@@ -87,7 +103,10 @@ fn classification_is_stable_across_identical_input() {
 
 #[test]
 fn garbage_input_is_an_error() {
-    assert_eq!(classify("<html><body>maintenance</body></html>"), Err(ParseError::CardNotFound));
+    assert_eq!(
+        classify("<html><body>maintenance</body></html>"),
+        Err(ParseError::CardNotFound)
+    );
     assert_eq!(classify(""), Err(ParseError::CardNotFound));
 }
 

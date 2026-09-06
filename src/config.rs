@@ -23,7 +23,10 @@ pub struct Config {
 /// Treat whitespace-only values as absent. Deploy tooling frequently sets empty
 /// strings rather than unsetting a variable.
 fn opt(map: &HashMap<String, String>, key: &str) -> Option<String> {
-    map.get(key).map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string())
+    map.get(key)
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
 }
 
 impl Config {

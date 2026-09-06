@@ -4,7 +4,12 @@ use sb_watcher::state::{transitions, Alert, AlertKind, Severity};
 const URL: &str = "https://example.test/ticket";
 
 fn obs(resale: ResaleState, text: &str, main_sold_out: bool) -> PageObservation {
-    PageObservation { resale, resale_text: text.to_string(), listings: vec![], main_sold_out }
+    PageObservation {
+        resale,
+        resale_text: text.to_string(),
+        listings: vec![],
+        main_sold_out,
+    }
 }
 
 fn empty() -> PageObservation {
@@ -83,7 +88,11 @@ fn alert_still_fires_when_no_listings_could_be_parsed() {
     let a = transitions(Some(&empty()), &unparseable, URL);
     assert_eq!(kinds(&a), vec![AlertKind::ResaleAvailable]);
     assert_eq!(a[0].severity, Severity::Max);
-    assert!(a[0].body.contains("something new"), "raw text must survive: {}", a[0].body);
+    assert!(
+        a[0].body.contains("something new"),
+        "raw text must survive: {}",
+        a[0].body
+    );
 }
 
 #[test]

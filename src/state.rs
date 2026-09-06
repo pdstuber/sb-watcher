@@ -12,8 +12,7 @@ pub fn listing_summary(listings: &[Listing], raw_text: &str) -> String {
     }
     let n = listings.len();
     let noun = if n == 1 { "ticket" } else { "tickets" };
-    let lines: Vec<String> =
-        listings.iter().map(|l| format!("• {} — {}", l.name, l.price)).collect();
+    let lines: Vec<String> = listings.iter().map(|l| format!("• {} — {}", l.name, l.price)).collect();
     format!("{n} {noun} available:\n{}", lines.join("\n"))
 }
 
@@ -46,13 +45,13 @@ pub struct Alert {
 }
 
 impl Alert {
-    pub fn new(
-        kind: AlertKind,
-        severity: Severity,
-        title: impl Into<String>,
-        body: impl Into<String>,
-    ) -> Self {
-        Alert { kind, severity, title: title.into(), body: body.into() }
+    pub fn new(kind: AlertKind, severity: Severity, title: impl Into<String>, body: impl Into<String>) -> Self {
+        Alert {
+            kind,
+            severity,
+            title: title.into(),
+            body: body.into(),
+        }
     }
 }
 
@@ -60,11 +59,7 @@ impl Alert {
 ///
 /// Pure: no clock, no I/O. `prev == None` means this is the first observation
 /// after start-up.
-pub fn transitions(
-    prev: Option<&PageObservation>,
-    cur: &PageObservation,
-    url: &str,
-) -> Vec<Alert> {
+pub fn transitions(prev: Option<&PageObservation>, cur: &PageObservation, url: &str) -> Vec<Alert> {
     let mut out = Vec::new();
 
     let resale_available = |out: &mut Vec<Alert>| {
@@ -110,10 +105,7 @@ pub fn transitions(
                     AlertKind::ResaleTextChanged,
                     Severity::Info,
                     "⚠️ Ticketbörse wording changed",
-                    format!(
-                        "Before:\n{}\n\nAfter:\n{}\n\n{}",
-                        p.resale_text, cur.resale_text, url
-                    ),
+                    format!("Before:\n{}\n\nAfter:\n{}\n\n{}", p.resale_text, cur.resale_text, url),
                 )),
                 _ => {}
             }

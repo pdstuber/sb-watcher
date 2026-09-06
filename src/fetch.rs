@@ -44,7 +44,11 @@ impl Fetcher {
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(20))
             .build()?;
-        Ok(Fetcher { client, url: cfg.target_url.clone(), fixture: cfg.fixture_path.clone() })
+        Ok(Fetcher {
+            client,
+            url: cfg.target_url.clone(),
+            fixture: cfg.fixture_path.clone(),
+        })
     }
 
     pub async fn fetch(&self) -> Result<String, FetchError> {

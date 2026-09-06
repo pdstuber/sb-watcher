@@ -9,11 +9,9 @@ pub const SOLD_OUT_MARKER: &str = "Ausverkauft";
 
 static CARD: LazyLock<Selector> = LazyLock::new(|| Selector::parse("div.card").unwrap());
 static CARD_HEADER: LazyLock<Selector> = LazyLock::new(|| Selector::parse(".card-header").unwrap());
-static TICKET_FRAME: LazyLock<Selector> =
-    LazyLock::new(|| Selector::parse("turbo-frame#ticket_detail").unwrap());
+static TICKET_FRAME: LazyLock<Selector> = LazyLock::new(|| Selector::parse("turbo-frame#ticket_detail").unwrap());
 static DANGER: LazyLock<Selector> = LazyLock::new(|| Selector::parse("div.alert-danger").unwrap());
-static SWAP_ITEM: LazyLock<Selector> =
-    LazyLock::new(|| Selector::parse(r#"li[id^="voucher_swap_"]"#).unwrap());
+static SWAP_ITEM: LazyLock<Selector> = LazyLock::new(|| Selector::parse(r#"li[id^="voucher_swap_"]"#).unwrap());
 static SWAP_NAME: LazyLock<Selector> = LazyLock::new(|| Selector::parse("div.fs-6").unwrap());
 static SWAP_PRICE: LazyLock<Selector> = LazyLock::new(|| Selector::parse("div.col-auto").unwrap());
 
@@ -112,9 +110,15 @@ pub fn classify(html: &str) -> Result<PageObservation, ParseError> {
 
     let listings = parse_listings(&card);
 
-    let main_sold_out = doc.select(&TICKET_FRAME).next().is_some_and(|frame| {
-        frame.select(&DANGER).any(|a| text_of(&a).contains(SOLD_OUT_MARKER))
-    });
+    let main_sold_out = doc
+        .select(&TICKET_FRAME)
+        .next()
+        .is_some_and(|frame| frame.select(&DANGER).any(|a| text_of(&a).contains(SOLD_OUT_MARKER)));
 
-    Ok(PageObservation { resale, resale_text, listings, main_sold_out })
+    Ok(PageObservation {
+        resale,
+        resale_text,
+        listings,
+        main_sold_out,
+    })
 }
