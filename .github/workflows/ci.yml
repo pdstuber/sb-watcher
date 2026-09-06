@@ -52,6 +52,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # This job only reads Cargo.lock and checks it against the advisory DB; it
+    # never builds this crate, so it must NOT inherit rust-toolchain.toml's 1.93
+    # pin. cargo-audit's own dependency tree needs a newer rustc than the pin
+    # (kstring 2.0.4 requires 1.96), which is the takecell problem in reverse:
+    # here it is the TOOL, not our code, that outruns the pin. RUSTUP_TOOLCHAIN
+    # overrides the file for this job only.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v4
+      # Informational: fails the check on a RUSTSEC advisory but does not gate
+      # deploy, since a down watcher is worse than a theoretical advisory.
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   deploy:
     name: deploy to fly.io
     # Only from main, and only once fmt/clippy/tests and the image build pass.
@@ -66,7 +87,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # Pinned by SHA: this job holds FLY_API_TOKEN, so a mutable ref is a
+      # supply-chain hole. SHA is tag 1.5 of superfly/flyctl-actions.
+      - uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be # 1.5
       - name: Deploy
         run: flyctl deploy --remote-only
         env:

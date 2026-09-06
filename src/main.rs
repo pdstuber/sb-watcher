@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
-use sb_watcher::bot::run_bot;
+use sb_watcher::bot::{run_bot, AllowedChat};
 use sb_watcher::config::Config;
 use sb_watcher::fetch::Fetcher;
-use sb_watcher::notify::{MultiNotifier, Notifier, NtfyNotifier, TelegramNotifier};
+use sb_watcher::notify::{ntfy_client, MultiNotifier, Notifier, NtfyNotifier, TelegramNotifier, NTFY_DEFAULT_BASE_URL};
 use sb_watcher::watcher::{run_watcher, AppState};
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -34,19 +34,28 @@ async fn main() -> Result<()> {
 
     let shared = Arc::new(Mutex::new(AppState::new(Utc::now())));
 
-    let Some(chat_id) = cfg.chat_id else {
-        // Discovery mode: no chat configured, so just help the user find theirs.
-        log::warn!("TELEGRAM_CHAT_ID is not set — running in discovery mode.");
+    if cfg.discovery {
+        // Explicit opt-in only: an accidentally blank TELEGRAM_CHAT_ID must be a
+        // startup error, never a silent bot-only deployment with no watcher.
+        log::warn!("SB_WATCHER_DISCOVERY is set — running in discovery mode, NOT watching.");
         log::warn!("Message the bot on Telegram and it will reply with the chat id to use.");
-        run_bot(bot, shared, cfg.target_url.clone()).await;
-        return Ok(());
+        run_bot(bot, shared, cfg.target_url.clone(), AllowedChat(None)).await;
+        anyhow::bail!("bot task exited unexpectedly — restarting");
+    }
+    let Some(chat_id) = cfg.chat_id else {
+        anyhow::bail!("TELEGRAM_CHAT_ID missing outside discovery mode; Config::from_map should have rejected this");
     };
 
     let mut channels: Vec<Box<dyn Notifier>> = vec![Box::new(TelegramNotifier::new(bot.clone(), ChatId(chat_id)))];
 
     match &cfg.ntfy_topic {
         Some(topic) => {
-            channels.push(Box::new(NtfyNotifier::new(reqwest::Client::new(), topic.clone())));
+            let client = ntfy_client().context("failed to build ntfy HTTP client")?;
+            channels.push(Box::new(NtfyNotifier::new(
+                client,
+                NTFY_DEFAULT_BASE_URL,
+                topic.clone(),
+            )));
             log::info!("ntfy channel enabled");
         }
         None => log::warn!("NTFY_TOPIC not set — Telegram is the only channel"),
@@ -61,13 +70,18 @@ async fn main() -> Result<()> {
     log::info!("watching {} every {:?}", cfg.target_url, cfg.poll_interval);
 
     let watcher = tokio::spawn(run_watcher(cfg.clone(), fetcher, notifier.clone(), shared.clone()));
-    let commands = tokio::spawn(run_bot(bot, shared, cfg.target_url.clone()));
+    let commands = tokio::spawn(run_bot(
+        bot,
+        shared,
+        cfg.target_url.clone(),
+        AllowedChat(Some(ChatId(chat_id))),
+    ));
 
     // Neither task should ever finish: run_watcher loops forever and the bot
     // dispatcher runs until shutdown. If one does return, the process MUST exit
-    // non-zero — fly's default restart policy is "on-failure", so returning
-    // Ok(()) here would look like a clean shutdown and the machine would never
-    // be restarted, leaving the watcher silently dead.
+    // non-zero. fly.toml sets the restart policy to "always" as a belt, but the
+    // default is "on-failure", and a clean Ok(()) exit previously left a dead
+    // watcher looking like a deliberate shutdown (CLAUDE.md invariant 5).
     tokio::select! {
         _ = watcher => anyhow::bail!("watcher task exited unexpectedly — restarting"),
         _ = commands => anyhow::bail!("bot task exited unexpectedly — restarting"),

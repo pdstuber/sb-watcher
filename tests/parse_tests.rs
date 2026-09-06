@@ -1,4 +1,4 @@
-use sb_watcher::parse::{classify, normalize_ws, ParseError, ResaleState};
+use sb_watcher::parse::{classify, normalize_ws, MainStock, ParseError, ResaleState};
 
 fn fixture(name: &str) -> String {
     std::fs::read_to_string(format!("tests/fixtures/{name}"))
@@ -11,7 +11,7 @@ fn fixture(name: &str) -> String {
 fn real_live_sbtix_page_is_empty() {
     let obs = classify(&fixture("empty_resale.html")).expect("card must be found");
     assert_eq!(obs.resale, ResaleState::Empty);
-    assert!(obs.main_sold_out, "the live page shows Ausverkauft");
+    assert_eq!(obs.main, MainStock::SoldOut, "the live page shows Ausverkauft");
     assert!(obs.listings.is_empty());
 }
 
@@ -92,7 +92,21 @@ fn a_missing_card_is_an_error_not_a_quiet_empty() {
 
 #[test]
 fn detects_main_product_back_on_sale() {
-    assert!(!classify(&fixture("main_on_sale.html")).unwrap().main_sold_out);
+    assert_eq!(classify(&fixture("main_on_sale.html")).unwrap().main, MainStock::OnSale);
+}
+
+#[test]
+fn a_missing_product_frame_is_unknown_not_on_sale() {
+    // A renamed frame must produce a structure warning, not a 3am Max alert.
+    let html = r#"<html><body>
+        <div class="card">
+          <div class="card-header"><h2>Ticketbörse</h2></div>
+          <div class="card-body">Es gibt aktuell keine Tickets zum Weiterverkauf.</div>
+        </div>
+    </body></html>"#;
+    let obs = classify(html).unwrap();
+    assert_eq!(obs.resale, ResaleState::Empty);
+    assert_eq!(obs.main, MainStock::Unknown);
 }
 
 #[test]

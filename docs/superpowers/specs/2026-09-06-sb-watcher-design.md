@@ -32,6 +32,11 @@ Ticketbörse text and a direct link so a human can judge quantity and price and 
 
 ## Reconnaissance
 
+The Ticketbörse card in its empty state, which is what the detector keys on. The heading
+supplies `CARD_HEADING` and the info banner supplies `EMPTY_MARKER`:
+
+![The Ticketbörse card showing the empty-state banner](../../ticketboerse-empty-state.png)
+
 Verified by direct HTTP probing of the live site on 2026-09-06:
 
 - A plain `GET` returns the complete page (~64 KB). The shop is a server-rendered Rails/Turbo

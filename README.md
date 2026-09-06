@@ -7,6 +7,7 @@ and alerts within ~60 seconds when tickets appear.
 Returned tickets for a sold-out festival get bought within minutes, and returns can be posted at any
 hour. So this runs 24/7 on fly.io, alerts over Telegram plus an optional ntfy fallback, keeps
 reminding for 30 minutes, and sends a daily heartbeat so silence is never ambiguous.
+It also sends a message at every start, so a crash loop is visible even between heartbeats.
 
 ## How detection works, and why it looks backwards
 
@@ -26,15 +27,17 @@ markup is used for **enrichment only** — parsing `li[id^="voucher_swap_"]` to 
 prices — and never gates the alert. An alert saying *"3 tickets available, 45,20 € each"* tells you
 whether it is worth racing to the checkout; one that never fires tells you nothing.
 
-If the card cannot be found at all, that raises a warning rather than being treated as quiet, because
-a site redesign would otherwise blind the watcher permanently while it looked healthy.
+If the Ticketbörse card or the main product frame cannot be found, that raises a warning rather than
+being treated as quiet, because a site redesign would otherwise blind the watcher permanently while
+it looked healthy.
 
 ## Configuration
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `TELOXIDE_TOKEN` | yes | — | Bot token from [@BotFather](https://t.me/BotFather) |
-| `TELEGRAM_CHAT_ID` | no | — | Unset ⇒ discovery mode (below) |
+| `TELEGRAM_CHAT_ID` | yes* | — | *Not needed when `SB_WATCHER_DISCOVERY=1` (below) |
+| `SB_WATCHER_DISCOVERY` | no | — | `1` ⇒ discovery mode: bot only, no watching; replies with chat ids |
 | `NTFY_TOPIC` | no | — | Unset ⇒ ntfy channel disabled |
 | `POLL_INTERVAL_SECS` | no | `60` | |
 | `TARGET_URL` | no | the SB 2027 page | |
@@ -44,9 +47,10 @@ a site redesign would otherwise blind the watcher permanently while it looked he
 ## Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Find your chat id — run without `TELEGRAM_CHAT_ID` and message the bot; it replies with the id:
+2. Find your chat id — run in discovery mode and message the bot; it replies with the id:
    ```fish
    set -x TELOXIDE_TOKEN "123456:ABC..."
+   set -x SB_WATCHER_DISCOVERY 1
    cargo run
    ```
 3. Make the alert loud enough to wake you. **On iPhone** this means Telegram, not ntfy:
@@ -85,7 +89,7 @@ saves at most 59 seconds. `/status` answers the question it was really for.
 | Main product no longer shows *Ausverkauft* | **max**, repeats |
 | Resale stock gone / main sold out again | info, once |
 | Ticketbörse wording changed while still empty | info, once |
-| Ticketbörse card not found — watcher may be blind | info, ≤1×/24h |
+| Ticketbörse card or main product frame not found — watcher may be blind | info, ≤1×/24h |
 | Site unreachable for 15 min, or HTTP 403/429 | info, once per episode |
 | Still running | info, every 24h |
 
@@ -116,7 +120,7 @@ on offer. Then try:
 ## Tests
 
 ```fish
-cargo test                                        # 57 tests, no network
+cargo test                                        # 89 tests, no network
 cargo test --test live_site -- --ignored --nocapture   # checks the real page
 ```
 
@@ -135,7 +139,7 @@ fly logs
 `fly.toml` has no `[http_service]` and no `PORT` — Telegram long polling needs no inbound port, and
 `auto_stop_machines` applies only to services, so omitting the service is what keeps this running
 24/7. `[[restart]] policy = 'always'` is set deliberately: fly's default is `on-failure`, which
-would not restart a process that exited zero. `main` also exits non-zero if either task ever
+would not restart a process that exited zero. `main` also exits non-zero if any long-running task
 returns, so a dead watcher can never look like a clean shutdown.
 
 ## CI
