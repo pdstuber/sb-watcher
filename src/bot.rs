@@ -86,6 +86,7 @@ async fn on_command(
 /// Any non-command message replies with the chat id, so first-time setup does
 /// not need a third-party bot to discover it.
 async fn on_message(bot: Bot, msg: Message) -> ResponseResult<()> {
+    log::info!("DISCOVERED CHAT ID: {}", msg.chat.id.0);
     bot.send_message(msg.chat.id, format!("This chat's id is: {}", msg.chat.id.0))
         .await?;
     Ok(())

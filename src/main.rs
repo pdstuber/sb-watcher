@@ -16,6 +16,22 @@ async fn main() -> Result<()> {
 
     let cfg = Config::from_env().context("invalid configuration")?;
     let bot = Bot::new(cfg.telegram_token.clone());
+
+    // Validate the token before anything else. Without this, a bad token
+    // surfaces as a panic from deep inside teloxide's dispatcher
+    // ("Couldn't prepare dispatching context: Api(InvalidToken)"), which says
+    // nothing about what to actually do — and on fly it becomes a crashloop.
+    match bot.get_me().await {
+        Ok(me) => log::info!("authenticated as @{}", me.username()),
+        Err(e) => {
+            anyhow::bail!(
+                "Telegram rejected TELOXIDE_TOKEN ({e}).\n\
+                 Re-copy it from @BotFather: send /mybots, pick the bot, then 'API Token'.\n\
+                 Note that /revoke or /token issues a NEW token and invalidates the old one."
+            );
+        }
+    }
+
     let shared = Arc::new(Mutex::new(AppState::new(Utc::now())));
 
     let Some(chat_id) = cfg.chat_id else {
