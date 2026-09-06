@@ -14,9 +14,15 @@
 
 FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
 WORKDIR /app
+# rust-toolchain.toml must be copied BEFORE `rustup target add`. Otherwise the
+# target lands on the image's default toolchain, and the later build — which
+# sees the pin and switches to it — finds no musl std and fails with
+# "can't find crate for `std`". `rustup show` installs the pinned toolchain.
+COPY rust-toolchain.toml .
 RUN apt-get update \
     && apt-get install -y --no-install-recommends musl-tools \
     && rm -rf /var/lib/apt/lists/* \
+    && rustup show \
     && rustup target add "$(uname -m)-unknown-linux-musl"
 
 FROM chef AS planner
